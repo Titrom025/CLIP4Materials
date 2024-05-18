@@ -1,11 +1,14 @@
-import os
+import logging
 import json
+import os
 
+import hydra
 import torch
 
 from datetime import datetime
 from tqdm import tqdm
 
+from omegaconf import OmegaConf
 from PIL import Image
 from transformers import CLIPProcessor, CLIPModel
 from torch.nn import functional as F
@@ -13,16 +16,17 @@ from torch.utils.data import DataLoader, Dataset
 from torchvision.transforms import Compose, Resize, CenterCrop, ToTensor, Normalize
 from torch.optim.lr_scheduler import CosineAnnealingLR
 
+
 class CustomCLIPDataset(Dataset):
-    def __init__(self, dataset_root, data_file, transform=None):
-        with open(data_file, 'r') as f:
+    def __init__(self, root, data_file, transform=None):
+        with open(os.path.join(root, data_file), 'r') as f:
             data = json.load(f)
         self.images = []
         self.texts = []
-        for key, value in data.items():
-            image_path = os.path.join(dataset_root, key)
-            if 'mirror' in key or 'list' in key:
-                print(f'Skipping: {key}')
+        for image_path, value in data.items():
+            image_path = os.path.join(root, image_path)
+            if 'mirror' in image_path or 'list' in image_path:
+                print(f'Skipping: {image_path}')
                 continue
             for i in range(3):
                 desc_key = f"description_{i}"
@@ -41,6 +45,7 @@ class CustomCLIPDataset(Dataset):
         text = self.texts[idx]
         return image, text
 
+
 def contrastive_loss(image_features, text_features, temperature=0.07):
     image_features = F.normalize(image_features, p=2, dim=-1)
     text_features = F.normalize(text_features, p=2, dim=-1)
@@ -52,6 +57,7 @@ def contrastive_loss(image_features, text_features, temperature=0.07):
             F.cross_entropy(logits.t() / temperature, labels)) / 2
     return loss
 
+
 def calculate_accuracy(logits):
     with torch.no_grad():
         predictions = logits.argmax(dim=-1)
@@ -59,40 +65,34 @@ def calculate_accuracy(logits):
         acc = correct.float() / logits.size(0)
     return acc
 
-def main():
-    config = {
-        "batch_size": 32,
-        "num_epochs": 5,
-        "learning_rate": 1e-5,
-        "freeze_image_encoder": True,
-        "scheduler": "CosineAnnealingLR",
-        "experiments_dir": "experiments/"
-    }
 
-    if not os.path.exists(config["experiments_dir"]):
-        os.makedirs(config["experiments_dir"])
+@hydra.main(config_path='conf', config_name='default')
+def main(cfg):
+    script_root = hydra.utils.get_original_cwd()
+    logger = logging.getLogger(__name__)
+
+    logger.info('Hydra config:')
+    logger.info(OmegaConf.to_yaml(cfg))
+
+    if not os.path.exists(cfg.experiments_dir):
+        os.makedirs(cfg.experiments_dir)
     
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    experiment_path = f'{config["experiments_dir"]}/exp_train_clip_{date_str}'
+    experiment_path = f'{cfg.experiments_dir}/exp_train_clip_{date_str}'
 
-    dataset_root = '../ml-hypersim/project'
-    data_file = '..//ml-hypersim/project/material_dataset/processed_materials_with_llava.json'
+    data_file = 'material_dataset_v2/processed_materials_with_llava.json'
     output_model_dir = os.path.join(experiment_path)
 
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
     processor = CLIPProcessor.from_pretrained("openai/clip-vit-base-patch32")
 
-    if config["freeze_image_encoder"]:
+    if cfg.freeze_image_encoder:
         for name, param in model.vision_model.named_parameters():
-            print(f'Freeze {name}')
+            logger.info(f'Freeze {name}')
             param.requires_grad = False
 
-    optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"])
-
-    if config['scheduler'] == 'CosineAnnealingLR':
-        scheduler = CosineAnnealingLR(optimizer, T_max=config["num_epochs"], eta_min=0) 
-    else:
-        raise ValueError(f'Unexpected sheduler: {config["scheduler"]}')
+    optimizer = hydra.utils.instantiate(cfg.optimizer, params=filter(lambda p: p.requires_grad, model.parameters()))
+    scheduler = hydra.utils.instantiate(cfg.scheduler, optimizer=optimizer)
 
     transform = Compose([
         Resize((256, 256), interpolation=Image.BICUBIC),
@@ -101,8 +101,8 @@ def main():
         Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
     ])
 
-    dataset = CustomCLIPDataset(dataset_root, data_file, transform)
-    dataloader = DataLoader(dataset, batch_size=config["batch_size"], shuffle=True)
+    dataset = CustomCLIPDataset(script_root, data_file, transform)
+    dataloader = DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model.to(device)
@@ -110,14 +110,12 @@ def main():
 
     if not os.path.exists(output_model_dir):
         os.makedirs(output_model_dir)
-    with open(os.path.join(output_model_dir, 'config_params.json'), 'w') as f:
-        json.dump(config, f, indent=4)
 
-    for epoch in range(config["num_epochs"]):
+    for epoch in range(cfg.num_epochs):
         total_loss = 0
         total_accuracy = 0
         total_batches = 0
-        tqdm_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{config['num_epochs']}")
+        tqdm_bar = tqdm(dataloader, desc=f"Epoch {epoch + 1}/{cfg.num_epochs}")
 
         for images, texts in tqdm_bar:
             images = images.to(device)
@@ -138,14 +136,13 @@ def main():
             total_accuracy += accuracy
             total_batches += 1
             
-            # Update tqdm bar to include the current learning rate
             tqdm_bar.set_postfix(loss=f"{total_loss / total_batches:.3f}", lr=f"{optimizer.param_groups[0]['lr']:.6f}")
 
-        scheduler.step()  # Step the scheduler after each epoch
+        scheduler.step()
 
         average_loss = total_loss / total_batches
         average_accuracy = total_accuracy / total_batches
-        print(f"Epoch {epoch + 1} - Average Loss: {average_loss:.3f}, Average Accuracy: {average_accuracy:.3f}")
+        logger.info(f"Epoch {epoch + 1} - Average Loss: {average_loss:.3f}, Average Accuracy: {average_accuracy:.3f}")
     
     model.save_pretrained(output_model_dir)
     processor.save_pretrained(output_model_dir)
