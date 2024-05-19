@@ -25,7 +25,13 @@ def draw_material(image_path, result, output_path):
     image.save(output_path)
 
 
-def evaluate_clip_model(model_path, dataset_root, material_markup, classes, debug=False):
+def evaluate_clip_model(model_path, dataset_root, material_markup, material_classes, debug=False):
+    output_markup = os.path.join(model_path, 'evaluate_stats_v2_withopenai.json')
+    if os.path.exists(output_markup):
+        print(f'Markup already exists: {output_markup}')
+        return
+    print(f'Evaluating model {model_path}')
+
     if torch.cuda.is_available():
         device = torch.device('cuda:0')
     else:
@@ -36,44 +42,47 @@ def evaluate_clip_model(model_path, dataset_root, material_markup, classes, debu
     if not os.path.isdir(model_path):
         # model from huggingface
         model_path = os.path.join("experiments", model_path)
+        output_markup = os.path.join("experiments", output_markup)
         os.makedirs(model_path, exist_ok=True)
 
-    draw_folder = "drawed_materials"
-    draw_output_folder = os.path.join(model_path, draw_folder)
-    if os.path.exists(draw_output_folder):
-        shutil.rmtree(draw_output_folder)
-    os.makedirs(draw_output_folder)
+    if debug:
+        draw_folder = "drawed_materials"
+        draw_output_folder = os.path.join(model_path, draw_folder)
+        if os.path.exists(draw_output_folder):
+            shutil.rmtree(draw_output_folder)
+        os.makedirs(draw_output_folder)
 
     total_count = 0
     correct_count = 0
 
     with open(material_markup, 'r') as file:
         material_references = json.load(file)
-    
-    output_markup = os.path.join(model_path, 'evaluate_stats.json')
 
     for image_path in tqdm(material_references):
+        object_name = ','.join(material_references[image_path]["name"]).strip()
+        prompts = [f"The {object_name} is made of {material}" for material in material_classes]
         image_full_path = os.path.join(dataset_root, image_path)
 
         image = Image.open(image_full_path).convert("RGB")
-        inputs = processor(text=classes, images=image, return_tensors="pt", padding=True)
+        inputs = processor(text=prompts, images=image, return_tensors="pt", padding=True)
+        # inputs = processor(text=material_classes, images=image, return_tensors="pt", padding=True)
         outputs = model(**inputs.to(device))
         logits_per_image = outputs.logits_per_image
         probs = logits_per_image.softmax(dim=1)
         max_idx = probs.argmax().item()
         confidence = probs.max().item()
-        best_class = classes[max_idx]
+        best_class = material_classes[max_idx]
 
-        result = {"material": best_class, "confidence": confidence}
-        if debug:
-            result["all_materials"] = {cls: float(prob) for cls, prob in zip(classes, probs[0])}
+        result = {"material": best_class, "confidence": confidence, "prompt": prompts[max_idx]}
+        result["all_materials"] = {cls: float(prob) for cls, prob in zip(material_classes, probs[0])}
         
         material_references[image_path]['predicted_material'] = result['material']
         material_references[image_path]['predicted_confidence'] = result['confidence']
-        if debug:
-            material_references[image_path]['all_materials'] = result['all_materials']
+        material_references[image_path]['prompt'] = result['prompt']
+        material_references[image_path]['all_materials'] = result['all_materials']
 
-        draw_material(image_full_path, result, os.path.join(draw_output_folder, image_path))
+        if debug:
+            draw_material(image_full_path, result, os.path.join(draw_output_folder, image_path))
 
         total_count += 1
         is_correct = any(mat in material_references[image_path]['material'] for mat in [result['material']])
@@ -96,16 +105,27 @@ def evaluate_clip_model(model_path, dataset_root, material_markup, classes, debu
 
 def main():
     parser = argparse.ArgumentParser(description="Evaluate CLIP model for material classification.")
-    parser.add_argument("model_path", type=str, help="Path to the pre-trained CLIP model or checkpoint.")
-    parser.add_argument("--dataset_root", type=str, default="../ml-hypersim/project/", help="Root directory of the dataset.")
-    parser.add_argument("--material_markup", type=str, default="../ml-hypersim/project/material_dataset/processed_materials.json", help="Path to the material markup file.")
+    parser.add_argument("--model-path", type=str, help="Path to the pre-trained CLIP model or checkpoint.")
+    parser.add_argument("--dataset-root", type=str, default="./", help="Root directory of the dataset.")
+    parser.add_argument("--material-markup", type=str, default="material_dataset_135_scenes/test_data.json", help="Path to the material markup file.")
+    parser.add_argument("--models-dir", type=str, help="Path to the directory with models to test")
     parser.add_argument("--debug", action="store_true", help="Enable debug mode for more verbose output.")
 
     args = parser.parse_args()
 
+    assert args.model_path or args.models_dir, "You must specify --model-path or --models-dir"
+
     material_classes = ["textile", "glass", "paper", "wood", "plastic", "ceramics", "metal"]
 
-    evaluate_clip_model(args.model_path, args.dataset_root, args.material_markup, material_classes, args.debug)
+    if args.models_dir is not None:
+        for model_dir in tqdm(os.listdir(args.models_dir)):
+            model_path = os.path.join(args.models_dir, model_dir)
+            if not os.path.isdir(model_path) or "openai" in model_path:
+                continue
+
+            evaluate_clip_model(model_path, args.dataset_root, args.material_markup, material_classes, args.debug)
+    else:
+        evaluate_clip_model(args.model_path, args.dataset_root, args.material_markup, material_classes, args.debug)
 
 if __name__ == "__main__":
     main()
