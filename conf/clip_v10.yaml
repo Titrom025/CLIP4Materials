@@ -1,0 +1,9 @@
+defaults:
+  - _self_
+  - scheduler: cosine_annealing_1e-6
+  - optimizer: adam_1e-4
+
+batch_size: 32
+num_epochs: 10
+freeze_image_encoder: True
+experiments_dir: experiments/

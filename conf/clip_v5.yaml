@@ -5,5 +5,5 @@ defaults:
 
 batch_size: 32
 num_epochs: 5
-freeze_image_encoder: False
+freeze_image_encoder: True
 experiments_dir: experiments/

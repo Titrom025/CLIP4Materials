@@ -4,6 +4,6 @@ defaults:
   - optimizer: adam_1e-5
 
 batch_size: 32
-num_epochs: 5
+num_epochs: 10
 freeze_image_encoder: False
 experiments_dir: experiments/
