@@ -19,15 +19,10 @@ def describe_with_llava(objects, processed_markup_path):
         object_names = ",".join(objects[image_path]["name"])
         object_materials = ",".join(objects[image_path]["material"])
         prompts = [
-            f'Describe the ({object_names}) made of ({object_materials}) in the image including color and material in one sentence.' \
+            f'Describe the ({object_names}) made of ({object_materials}) ' \
+            f'in the image including color and material in one sentence.' \
             f'There is an example of the answer format: ' \
             f'"The trash can is black and made of plastic"',
-            
-            f'Provide a short description of ({object_names}) made of ({object_materials})',
-
-            f'Name the material of the ({object_names}) made of ({object_materials}) in one sentence. ' \
-            f'There is an example of the answer format: ' \
-            f'"The trash can is made of plastic"'
         ]
         for prompt_idx, prompt in enumerate(prompts):
             ts = time.time()
@@ -48,7 +43,7 @@ def describe_with_llava(objects, processed_markup_path):
 
 
 def main():
-    dataset_path = "material_dataset_v2"
+    dataset_path = "material_dataset_135_scenes_v2"
     coco_markup_path = os.path.join(dataset_path, "processed_materials.json")
 
     with open(coco_markup_path, 'r') as json_file:
