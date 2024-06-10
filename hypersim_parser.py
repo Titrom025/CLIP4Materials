@@ -107,6 +107,12 @@ def process_frame(frame_image_path, frame_render_entity_id,
             or w < (min_image_area ** 0.5) / 2:
             continue
 
+        masked_image = original_image * mask[:, :, np.newaxis]
+        cropped_image = masked_image[top_left[0]:bottom_right[0]+1, top_left[1]:bottom_right[1]+1]
+
+        if np.sum(cropped_image == 0) > 0.6 * crop_area:
+            continue
+
         if obj_scene_name not in scene_objects:
             scene_objects[obj_scene_name] = {
                 'name': [obj_name],
