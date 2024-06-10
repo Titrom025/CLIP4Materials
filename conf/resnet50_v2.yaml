@@ -1,0 +1,12 @@
+defaults:
+  - _self_
+  - scheduler: cosine_annealing_1e-5
+  - optimizer: adam_1e-4
+
+batch_size: 32
+num_epochs: 5
+freeze_image_encoder: False
+experiments_dir: experiments/
+dataset_path: "material_dataset_135_scenes_v2"
+# use_clearml: True
+use_clearml: False

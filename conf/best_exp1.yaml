@@ -1,0 +1,14 @@
+batch_size: 16
+num_epochs: 30
+freeze_image_encoder: true
+experiments_dir: experiments/
+scheduler:
+  _target_: torch.optim.lr_scheduler.CosineAnnealingLR
+  T_max: ${num_epochs}
+  eta_min: 1.0e-05
+optimizer:
+  _target_: torch.optim.Adam
+  lr: 0.0001
+  weight_decay: 0.001
+dataset_path: "material_dataset_135_scenes"
+text_type: "a_photo_of"

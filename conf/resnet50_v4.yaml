@@ -5,5 +5,8 @@ defaults:
 
 batch_size: 32
 num_epochs: 5
-freeze_image_encoder: True
+freeze_image_encoder: False
 experiments_dir: experiments/
+dataset_path: "material_dataset_135_scenes_v2"
+# use_clearml: True
+use_clearml: False
