@@ -19,8 +19,10 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 import random
 from collections import defaultdict
 
+from torch.nn import Dropout
+
 class CustomCLIPDataset(Dataset):
-    def __init__(self, root, data_file, transform=None):
+    def __init__(self, root, data_file, transform=None, text_type='description'):
         with open(os.path.join(root, data_file), 'r') as f:
             data = json.load(f)
         self.images = []
@@ -31,11 +33,25 @@ class CustomCLIPDataset(Dataset):
             if 'mirror' in image_path or 'list' in image_path:
                 print(f'Skipping: {image_path}')
                 continue
-            for i in range(3):
-                desc_key = f"description_{i}"
-                if desc_key in value:
-                    self.images.append(image_path)
-                    self.texts.append(value[desc_key])
+            if text_type == 'description':
+                for i in range(3):
+                    desc_key = f"description_{i}"
+                    if desc_key in value:
+                        self.images.append(image_path)
+                        self.texts.append(value[desc_key])
+            elif text_type == 'a_photo_of':
+                self.images.append(image_path)
+                material = " ".join(value["material"])
+                name = " ".join(value["name"])
+                self.texts.append(f'a photo of a {material} {name}')
+            elif text_type == 'short':
+                self.images.append(image_path)
+                material = " ".join(value["material"])
+                name = " ".join(value["name"])
+                self.texts.append(f'{material} {name}')
+            else:
+                raise ValueError(f'Unexpected text_type: {text_type}')
+
         self.transform = transform
 
     def __len__(self):
@@ -56,7 +72,7 @@ def group_by_scene(data):
         scenes[scene][image_path] = value
     return scenes
 
-def split_scenes(scenes, seed=42, train_ratio=0.75, val_ratio=0.15, test_ratio=0.10):
+def split_scenes(scenes, seed=42, train_ratio=0.75, val_ratio=0.15):
     random.seed(seed)
     scene_names = list(scenes.keys())
     random.shuffle(scene_names)
@@ -83,7 +99,7 @@ def save_split_data(root, train_data, val_data, test_data):
     with open(os.path.join(root, 'test_data.json'), 'w') as f:
         json.dump(test_data, f)
 
-def create_datasets(root, transform=None):
+def create_datasets(root, text_type, transform=None):
     data_file = 'processed_materials_with_llava_combined.json'
     with open(os.path.join(root, data_file), 'r') as f:
         data = json.load(f)
@@ -93,10 +109,9 @@ def create_datasets(root, transform=None):
         train_data, val_data, test_data = split_scenes(scenes)
         save_split_data(root, train_data, val_data, test_data)
 
-    train_dataset = CustomCLIPDataset(root, 'train_data.json', transform=transform)
-    val_dataset = CustomCLIPDataset(root, 'val_data.json', transform=transform)
-    test_dataset = CustomCLIPDataset(root, 'test_data.json', transform=transform)
-
+    train_dataset = CustomCLIPDataset(root, 'train_data.json', transform=transform, text_type=text_type)
+    val_dataset = CustomCLIPDataset(root, 'val_data.json', transform=transform, text_type=text_type)
+    test_dataset = CustomCLIPDataset(root, 'test_data.json', transform=transform, text_type=text_type)
     return train_dataset, val_dataset, test_dataset
 
 def contrastive_loss(image_features, text_features, temperature=0.07):
@@ -122,7 +137,7 @@ def calculate_accuracy(logits):
 @hydra.main(config_path='conf', config_name='default')
 def main(cfg):
     date_str = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    task = Task.init(project_name='CLIP Material Classification', task_name=f'Clip_{date_str}', task_type=Task.TaskTypes.training)
+    task = Task.init(project_name='CLIP Material Classification Multi', task_name=f'Clip_{date_str}', task_type=Task.TaskTypes.training)
 
     script_root = hydra.utils.get_original_cwd()
 
@@ -140,7 +155,7 @@ def main(cfg):
     
     experiment_path = f'{experiments_dir}/exp_train_clip_{date_str}'
 
-    dataset_root = experiments_dir = os.path.join(script_root, 'material_dataset_135_scenes/')
+    dataset_root = experiments_dir = os.path.join(script_root, cfg.dataset_path)
     output_model_dir = os.path.join(experiment_path)
 
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch32")
@@ -161,7 +176,7 @@ def main(cfg):
         Normalize(mean=[0.48145466, 0.4578275, 0.40821073], std=[0.26862954, 0.26130258, 0.27577711]),
     ])
 
-    train_dataset, val_dataset, test_dataset = create_datasets(dataset_root, transform)
+    train_dataset, val_dataset, test_dataset = create_datasets(dataset_root, cfg.text_type, transform)
     train_dataloader = DataLoader(train_dataset, batch_size=cfg.batch_size, shuffle=True)
     val_dataloader = DataLoader(val_dataset, batch_size=cfg.batch_size, shuffle=False)
 
@@ -172,11 +187,11 @@ def main(cfg):
     if not os.path.exists(output_model_dir):
         os.makedirs(output_model_dir)
 
-    for epoch in range(cfg.num_epochs):
+    for epoch in range(1, cfg.num_epochs+1):
         total_loss = 0
         total_accuracy = 0
         total_batches = 0
-        tqdm_bar = tqdm(train_dataloader, desc=f"Epoch {epoch + 1}/{cfg.num_epochs}")
+        tqdm_bar = tqdm(train_dataloader, desc=f"Epoch {epoch}/{cfg.num_epochs}")
 
         for images, texts in tqdm_bar:
             images = images.to(device)
