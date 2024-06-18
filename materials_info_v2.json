@@ -1,0 +1,12 @@
+{
+    "textile": ["textile", "cotton_bud", "sponge", "towel", 
+                "pouf", "sofa"],
+    "glass": ["glass", "perfume", "carafe"],
+    "ceramics": ["ceramics", "bath-tub", "sink", "coffe", "dessert_plate", "vase", "cups", 
+                 "dish", "plate", "bath", "porcelane"],
+    "metal": ["metal", "tap", "tape", "tea-spoon", "candlestick",
+                "roaster", "knife", "knifes", "chrom"],
+    "wood": ["wood", "desk", "furniture_set"],
+    "plastic": ["plastic", "nivea", "toothbrush", "brush", "shampoo", "duck", "drink"],
+    "paper": ["paper", "books", "newspaper", "newspapers"]
+}
